@@ -1,0 +1,47 @@
+# Announces every published release in the Discord channel (webhook in the DISCORD_WEBHOOK secret).
+# Run it by hand (Actions > Discord-Ankündigung > Run workflow) to announce the latest release again.
+name: Discord-Ankündigung
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release lesen
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tag="${EVENT_TAG}"
+          if [ -z "$tag" ]; then
+            tag=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" > release.json
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: An Discord senden
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          payload=$(jq '{
+            username: "Warfront",
+            content: "Neue Version von **Warfront** ist da!",
+            embeds: [{
+              title: (.name // ("Warfront " + .tag_name)),
+              url: .html_url,
+              description: ((.body // "") | if length > 3800 then .[0:3800] + "\n…" else . end),
+              color: 13214785,
+              fields: [{
+                name: "Download",
+                value: ([.assets[] | "[" + .name + "](" + .browser_download_url + ")"] | join("\n") | if . == "" then .html_url else . end)
+              }],
+              footer: {text: .tag_name},
+              timestamp: .published_at
+            }]
+          }' release.json)
+          curl -sS --fail-with-body -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
